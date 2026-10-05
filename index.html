@@ -368,7 +368,7 @@
 
 <header>
   <nav>
-    <div class="logo"><span class="dot"></span>dev<span style="color:var(--text-mute)">.dev</span></div>
+    <div class="logo"><span class="dot"></span>Binit<span style="color:var(--text-mute)">.dev</span></div>
     <div class="nav-links">
       <a href="#about" data-idx="01">about</a>
       <a href="#skills" data-idx="02">skills</a>
@@ -384,9 +384,9 @@
 
   <section class="hero" style="border-top:none; padding-top: 90px;">
     <div class="eyebrow">SYSTEM ONLINE</div>
-    <h1>dev<span class="accent">.</span></h1>
+    <h1>Binit<span class="accent">.</span></h1>
+    <div id="age-display" class="mono" style="margin-top:16px; color:var(--trace); font-size:14px;">I am loading...</div>
     <p class="hero-role">Computer Science Engineering student at PDEU — I build things at the intersection of hardware and software, from embedded firmware to full-stack apps.</p>
-
     <div class="terminal">
       <div class="terminal-bar">
         <span></span><span></span><span></span>
@@ -600,12 +600,24 @@
 </main>
 
 <footer>
-  <p>designed &amp; built by dev— Ahmedabad</p>
+  <p>designed &amp; built by Binit — Ahmedabad</p>
 </footer>
 
 <script>
-  const target = "cat /about/dev.txt";
+  const target = "cat /about/binit.txt";
   const el = document.getElementById('typeTarget');
+  // Live age counter (DOB: 16 June 2008, 14:32:18 IST)
+  const ageElement = document.getElementById("age-display");
+  const birthTime = new Date("2008-06-16T14:32:18+05:30").getTime();
+  const MS_PER_YEAR = 1000 * 60 * 60 * 24 * 365.2425; // average year incl. leap years
+
+  function updateAge() {
+    const years = (Date.now() - birthTime) / MS_PER_YEAR;
+    ageElement.textContent = `I am ${years.toFixed(15)} years old`;
+  }
+  updateAge();
+  setInterval(updateAge, 50);
+
   let i = 0;
   function type(){
     if(i <= target.length){
