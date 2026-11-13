@@ -29,8 +29,8 @@ body{color:var(--fg);font:14px/1.45 system-ui,sans-serif;padding:14px}
 
 #c,#ov,#mm,#t,#av{position:absolute;inset:0;width:100%;height:100%;display:block;background:#000}
 #ov,#mm,#t,#av{object-fit:contain}
-#c,#ov{touch-action:none}
-#ov{cursor:grab}
+#c,#ov,#mm{touch-action:none}
+#ov,#mm{cursor:grab}
 #t{image-rendering:pixelated}
 #av[hidden]{display:none}
 .tag{display:var(--tag-display);position:absolute;left:6px;top:6px;z-index:2;pointer-events:none;background:rgba(0,0,0,.75);color:var(--mut);
@@ -76,6 +76,7 @@ details.cap summary{cursor:pointer}
 <button id="bp">▶ Play (30 fps + sound)</button>
 <span>Frame</span><input id="sl" type="range" min="0" max="29" value="0"><span id="fn">1/30</span>
 </div>
+<div class="row"><label>go to frame <input id="gf" type="number" min="1" value="1" style="width:70px"></label><button id="gg">Go (glide camera)</button></div>
 <p class="cap" id="sn"></p>
 <div class="row">
 <label><input id="ub" type="checkbox" checked> use blockers</label>
@@ -86,12 +87,13 @@ details.cap summary{cursor:pointer}
 <label>start (s) <input id="vs" type="number" value="0" min="0" style="width:60px"></label>
 <label>length (s, 0 = all) <input id="ml" type="number" value="0" min="0" style="width:60px"></label>
 </div>
-<details class="cap"><summary>Help</summary>Every 30 frames get their own cloud (30 camera views each). Put video.mp4 next to this page and it is processed automatically (or use Upload video), then press Play; its audio plays in sync. Processing the whole video takes a while, so try a short length first. Drag inside the Cloud state box to orbit it. The Source video box shows the original video when one is loaded (video.mp4 next to this page is loaded automatically, or use Upload video).</details>
+<details class="cap"><summary>Help</summary>Every 30 frames get their own cloud (30 camera views each). Put video.mp4 next to this page and it is processed automatically (or use Upload video), then press Play; its audio plays in sync. Processing the whole video takes a while, so try a short length first. Drag inside the Cloud state or Camera location box to orbit, scroll or pinch to zoom, double-click to reset zoom. Interrupting playback by touching the Cloud state box pauses it; then pressing Play or moving the slider makes the camera glide to that frame instead of jumping. The Source video box shows the original video when one is loaded (video.mp4 next to this page is loaded automatically, or use Upload video).</details>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 const W=64,H=48,FOV=28,R=10,TY=Math.tan(FOV*Math.PI/360),TX=TY*W/H,PS=2*TY/H,N=30;
 let frames=[],cams=[],X=[],Y=[],Z=[],S=[],B=[],need=[];
+let PZ=null,glide={on:false},glideArmed=false,pendingPlay=false,glideRaf=false,cdist=30;
 let allFrames=[],clouds=[],total=0,cur=0,mode="view",playing=false,yaw=0.6,pit=0.3,hist=[],shown=-1,vid=false,t0v=0,baseT=0;
 const geoCache=new Map(),$=id=>document.getElementById(id);
 const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
@@ -200,6 +202,7 @@ function getCloud(k){
   clouds[k]=c;if(clouds[k-4])delete clouds[k-4];return c;
 }
 async function buildAll(arr,label){
+  glide.on=false;glideArmed=false;PZ=null;
   allFrames=arr;total=arr.length;clouds=[];enc=[];geoCache.forEach(g=>g.dispose());geoCache.clear();shown=-1;
   const nc=Math.ceil(total/N),t1=performance.now();
   for(let k=0;k<nc;k++){
@@ -220,6 +223,15 @@ const mat=new THREE.ShaderMaterial({
   fragmentShader:"varying float vB;uniform float uShow;uniform float uUse;void main(){if(vB>.5){if(uUse<.5)discard;gl_FragColor=vec4(uShow,0.,0.,1.);}else gl_FragColor=vec4(1.);}"
 });
 const pts=new THREE.Points(new THREE.BufferGeometry(),mat);pts.frustumCulled=false;scene.add(pts);
+/* faint XYZ axes: X red, Y green, Z blue (standard RGB = XYZ); negative half dimmer */
+const AL=3,AC=[[1,.3,.3],[.3,1,.3],[.35,.55,1]],AX=[[1,0,0],[0,1,0],[0,0,1]];
+const axG=new THREE.BufferGeometry(),axP=[],axC=[];
+for(let a=0;a<3;a++)for(const [s,f] of [[-1,.35],[1,1]]){
+  axP.push(0,0,0,...AX[a].map(v=>v*AL*s));axC.push(...AC[a].map(v=>v*f),...AC[a].map(v=>v*f));
+}
+axG.setAttribute("position",new THREE.Float32BufferAttribute(axP,3));axG.setAttribute("color",new THREE.Float32BufferAttribute(axC,3));
+const axObj=new THREE.LineSegments(axG,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:.45,depthTest:false}));
+axObj.visible=false;scene.add(axObj);
 function showCloud(k){
   if(shown===k)return;shown=k;
   let g=geoCache.get(k);
@@ -236,23 +248,53 @@ function showCloud(k){
 const OW=640,OH=480,ovx=$("ov").getContext("2d");
 function place(){
   if(!clouds.length)return;
+  if(!PZ)refreshPose();
   mat.uniforms.uShow.value=$("sb").checked?1:0;
   mat.uniforms.uUse.value=$("ub").checked?1:0;
-  cam.fov=40;cam.aspect=W/H;const r=30;
+  cam.fov=40;cam.aspect=W/H;const r=cdist;
   cam.position.set(r*Math.cos(pit)*Math.sin(yaw),r*Math.sin(pit),r*Math.cos(pit)*Math.cos(yaw));
-  cam.up.set(0,1,0);cam.lookAt(0,0,0);cam.updateProjectionMatrix();
+  cam.up.set(0,1,0);cam.lookAt(0,0,0);cam.updateProjectionMatrix();cam.updateMatrixWorld();
   mat.uniforms.uMin.value=1.5;mat.uniforms.uScale.value=480/(2*Math.tan(cam.fov*Math.PI/360));
-  renderer.render(scene,cam);
+  axObj.visible=true;renderer.render(scene,cam);axObj.visible=false;
   ovx.drawImage(renderer.domElement,0,0,OW,OH);
-  cam.fov=FOV;const c=cams[cur%N];
+  ovx.font="bold 13px system-ui";ovx.textAlign="center";ovx.textBaseline="middle";
+  ["X","Y","Z"].forEach((t,a)=>{const v=new THREE.Vector3(...AX[a].map(q=>q*(AL+.4))).project(cam);
+    if(v.z<1){ovx.fillStyle="rgba("+AC[a].map(q=>Math.round(q*255))+",.7)";ovx.fillText(t,(v.x*.5+.5)*OW,(-v.y*.5+.5)*OH)}});
+  cam.fov=FOV;const c=PZ;
   cam.position.set(...c.pos);cam.up.set(0,1,0);cam.lookAt(0,0,0);cam.updateProjectionMatrix();
   mat.uniforms.uMin.value=0;mat.uniforms.uScale.value=480/(2*Math.tan(cam.fov*Math.PI/360));
   renderer.render(scene,cam);
 }
+/* camera pose: normally the stored camera of the current frame; while gliding, an eased great-circle blend */
+const poseAt=pos=>{const fwd=norm(pos.map(v=>-v)),right=norm(cross(fwd,[0,1,0])),up=cross(right,fwd);return{pos,fwd,right,up}};
+const dirOf=p=>{const l=Math.hypot(...p);return p.map(v=>v/l)};
+function refreshPose(){
+  if(glide.on){
+    const t=Math.min(1,(performance.now()-glide.t0)/glide.dur),e=t*t*(3-2*t),a=glide.from,b=glide.to;
+    const om=Math.acos(Math.max(-1,Math.min(1,dot(a,b))));let p;
+    if(om<1e-4)p=b;else{const sn=Math.sin(om),k1=Math.sin((1-e)*om)/sn,k2=Math.sin(e*om)/sn;p=[0,1,2].map(i=>a[i]*k1+b[i]*k2)}
+    PZ=poseAt(p.map(v=>v*R));
+  }else PZ=cams[cur%N];
+}
+function startGlide(idx){
+  const to=dirOf(cams[idx].pos),from=dirOf((PZ||cams[idx]).pos);
+  const om=Math.acos(Math.max(-1,Math.min(1,dot(from,to))));
+  if(om<1e-3){glide.on=false;return}
+  glide={on:true,from,to,t0:performance.now(),dur:600+900*om/Math.PI};
+  if(!glideRaf){glideRaf=true;requestAnimationFrame(glideTick)}
+}
+function glideTick(){
+  if(!glide.on){glideRaf=false;return}
+  const done=performance.now()-glide.t0>=glide.dur;
+  if(done)glide.on=false;
+  refreshPose();drawMap();place();
+  if(done){glideRaf=false;if(pendingPlay){pendingPlay=false;beginPlay()}}
+  else requestAnimationFrame(glideTick);
+}
 /* minimap of camera positions */
-const MW=480,MH=360,MS=14; /* camera-location canvas size + zoom */
+const MW=480,MH=360;let MS=14,mYaw=.6,mPit=1.047; /* camera-location canvas size, zoom, view angles */
 function mapPt(p){
-  const ca=Math.cos(.6),sa=Math.sin(.6),cp=Math.cos(1.047),sp=Math.sin(1.047);
+  const ca=Math.cos(mYaw),sa=Math.sin(mYaw),cp=Math.cos(mPit),sp=Math.sin(mPit);
   const x=p[0]*ca+p[2]*sa,z=-p[0]*sa+p[2]*ca,y=p[1]*cp-z*sp,d=p[1]*sp+z*cp;
   return[MW/2+x*MS,MH/2-y*MS,d/R];
 }
@@ -261,12 +303,21 @@ function drawMap(){
   const P=v=>mapPt(v);
   const ring=(f,col)=>{g.strokeStyle=col;g.lineWidth=1;g.beginPath();for(let i=0;i<=48;i++){const a=i/48*Math.PI*2,p=P(f(a));i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1])}g.stroke()};
   const box=(v,col,w)=>{g.strokeStyle=col;g.lineWidth=w;for(let i=0;i<8;i++)for(const b of[1,2,4])if(!(i&b)){const p=P(v(i)),q=P(v(i|b));g.beginPath();g.moveTo(p[0],p[1]);g.lineTo(q[0],q[1]);g.stroke()}};
+  /* faint axes */
+  for(let a=0;a<3;a++){const p=P(AX[a].map(v=>-v*AL)),q=P(AX[a].map(v=>v*AL)),col=AC[a].map(v=>Math.round(v*255));
+    g.strokeStyle="rgba("+col+",.45)";g.lineWidth=1;g.beginPath();g.moveTo(p[0],p[1]);g.lineTo(q[0],q[1]);g.stroke();
+    const l=P(AX[a].map(v=>v*(AL+.5)));g.fillStyle="rgba("+col+",.8)";g.font="bold 11px system-ui";g.textAlign="center";g.textBaseline="middle";g.fillText("XYZ"[a],l[0],l[1])}
+  /* the cloud itself, faint, so the camera looks like it is capturing it */
+  {const cl=getCloud(Math.floor(cur/N)),pp=cl.p,ca=Math.cos(mYaw),sa=Math.sin(mYaw),cp=Math.cos(mPit),sp=Math.sin(mPit),sz=Math.max(1.2,MS*.09);
+    g.fillStyle="rgba(255,255,255,.22)";g.beginPath();
+    for(let m=0;m<cl.white;m++){const px=pp[3*m],py=pp[3*m+1],pz=pp[3*m+2],x=px*ca+pz*sa,z=-px*sa+pz*ca,y=py*cp-z*sp;g.rect(MW/2+x*MS-sz/2,MH/2-y*MS-sz/2,sz,sz)}
+    g.fill()}
   ring(a=>[R*Math.cos(a),0,R*Math.sin(a)],"#2f3545");
   ring(a=>[R*Math.cos(a),R*Math.sin(a),0],"#20242f");
   ring(a=>[0,R*Math.sin(a),R*Math.cos(a)],"#20242f");
   box(i=>[(i&1?1:-1)*1.5,(i&2?1:-1)*1.5,(i&4?1:-1)*1.5],"#fff",1.5);
   for(let i=0;i<N;i++){const q=P(cams[i].pos);g.fillStyle="rgba(139,147,167,"+(.2+.3*(q[2]+1)/2)+")";g.beginPath();g.arc(q[0],q[1],2.5,0,7);g.fill()}
-  const c=cams[cur%N],at=(x,y,z)=>[0,1,2].map(k=>c.pos[k]+c.right[k]*x+c.up[k]*y+c.fwd[k]*z);
+  const c=PZ||cams[cur%N],at=(x,y,z)=>[0,1,2].map(k=>c.pos[k]+c.right[k]*x+c.up[k]*y+c.fwd[k]*z);
   const o=P(c.pos),cs=[[-1,1],[1,1],[1,-1],[-1,-1]].map(s=>P(at(s[0]*TX*R,s[1]*TY*R,R)));
   g.fillStyle="rgba(255,90,95,.2)";g.strokeStyle="#ff5a5f";g.lineWidth=1.5;
   g.beginPath();cs.forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]));g.closePath();g.fill();g.stroke();
@@ -284,15 +335,16 @@ function pushHist(i){hist.push(i%N);if(hist.length>14)hist.shift()}
 function updateFrame(){
   if(!clouds.length)return;
   const k=Math.floor(cur/N),c=getCloud(k);showCloud(k);if(cur%N===12&&k+1<clouds.length)setTimeout(()=>getCloud(k+1),0);showTarget();
+  if(vid&&!playing&&av.readyState>0){const tv=t0v+cur/30;if(Math.abs(av.currentTime-tv)>.005)av.currentTime=tv} /* keep the Source video on this frame when paused/scrubbing */
   $("sl").value=cur;$("fn").textContent=(cur+1)+"/"+total;
   const R_=(l,v)=>"<div class=r><span>"+l+"</span><b>"+v+"</b></div>";
   $("st").innerHTML=R_("Cloud",(k+1)+" / "+clouds.length)+R_("Frame",(cur+1)+" / "+total)+R_("View",(cur%N+1)+" / 30")+R_("Time",(cur/30).toFixed(2)+" s")+R_("White dots",c.white)+R_("Blockers",c.blk)+R_("Cloud accuracy",c.pct.toFixed(1)+"%")+R_("Strays",c.stray)+R_("This view",(c.acc[cur%N]*100).toFixed(1)+"%");
   if(!playing||hist[hist.length-1]!==cur%N)pushHist(cur);
-  drawMap();place();
+  refreshPose();drawMap();place();
 }
 function setMode(m){place()}
 
-function stop(){playing=false;av.pause();$("bp").textContent="▶ Play (30 fps + sound)"}
+function stop(){playing=false;pendingPlay=false;glideArmed=false;av.pause();$("bp").textContent="▶ Play (30 fps + sound)"}
 function loop(){
   if(!playing)return;
   let f;
@@ -305,20 +357,54 @@ function loop(){
   }
   requestAnimationFrame(loop);
 }
-$("bp").onclick=()=>{
-  if(!clouds.length)return;
-  if(playing){stop();return}
+function beginPlay(){
   playing=true;$("bp").textContent="⏸ Pause";setMode("view");
   if(vid){if(cur>=total-1)cur=0;av.currentTime=t0v+cur/30;av.muted=false;av.volume=1;av.play().then(()=>{note("🔊 Sound on");setTimeout(()=>{if(playing&&(av.webkitAudioDecodedByteCount===0||av.mozHasAudio===false))note("No audio detected in this video file.")},1500)}).catch(err=>{av.muted=true;av.play().catch(()=>{});note("Browser blocked sound ("+err.name+"), playing muted. Press Pause then Play again.")})}
   else{baseT=performance.now()-cur*1000/30;note("No audio source loaded.")}
   requestAnimationFrame(loop);
+}
+$("bp").onclick=()=>{
+  if(!clouds.length)return;
+  if(playing){stop();return}
+  if(pendingPlay){pendingPlay=false;$("bp").textContent="▶ Play (30 fps + sound)";return}
+  if(glideArmed){ /* user interrupted playback and moved things: glide to the frame's camera first */
+    glideArmed=false;startGlide(cur%N);
+    if(glide.on){pendingPlay=true;$("bp").textContent="… gliding (click to cancel)";note("Gliding to the camera for this frame, then playback starts.");return}
+  }
+  beginPlay();
 };
-$("sl").oninput=e=>{cur=+e.target.value;if(playing&&vid)av.currentTime=t0v+cur/30;else if(playing)baseT=performance.now()-cur*1000/30;hist=[];setMode("view");updateFrame()};
+$("sl").oninput=e=>{cur=+e.target.value;if(playing&&vid)av.currentTime=t0v+cur/30;else if(playing)baseT=performance.now()-cur*1000/30;hist=[];if(glideArmed&&!playing)startGlide(cur%N);setMode("view");updateFrame()};
+$("gg").onclick=()=>{
+  if(!clouds.length)return;
+  const f=Math.max(0,Math.min(total-1,(+$("gf").value||1)-1));
+  if(playing)stop();
+  cur=f;hist=[];$("gf").value=f+1;
+  startGlide(cur%N);
+  note(glide.on?"Gliding to the camera of frame "+(f+1)+" (view "+(f%N+1)+"/30).":"Frame "+(f+1)+" uses the same camera (view "+(f%N+1)+"/30) as the current one, so there is nothing to glide. Pick a frame with a different view number.");
+  updateFrame();
+};
 $("ub").onchange=$("sb").onchange=place;
-let drag=false,lx=0,ly=0;const cv=$("ov");
-cv.onpointerdown=e=>{drag=true;lx=e.clientX;ly=e.clientY;cv.setPointerCapture(e.pointerId)};
-cv.onpointerup=()=>drag=false;
-cv.onpointermove=e=>{if(!drag)return;yaw-=(e.clientX-lx)*.01;pit=Math.max(-1.4,Math.min(1.4,pit+(e.clientY-ly)*.01));lx=e.clientX;ly=e.clientY;place()};
+function bindView(el,onDrag,onZoom,onStart){
+  const ps=new Map(),dist=()=>{const q=[...ps.values()];return Math.hypot(q[0][0]-q[1][0],q[0][1]-q[1][1])};let pd=0;
+  el.addEventListener("pointerdown",e=>{el.setPointerCapture(e.pointerId);ps.set(e.pointerId,[e.clientX,e.clientY]);if(ps.size===2)pd=dist()});
+  const up=e=>{ps.delete(e.pointerId);pd=0};
+  el.addEventListener("pointerup",up);el.addEventListener("pointercancel",up);
+  el.addEventListener("pointermove",e=>{
+    const o=ps.get(e.pointerId);if(!o)return;
+    const dx=e.clientX-o[0],dy=e.clientY-o[1];ps.set(e.pointerId,[e.clientX,e.clientY]);
+    if(ps.size===1){if(dx||dy){onStart();onDrag(dx,dy)}}
+    else if(ps.size===2){const d=dist();if(pd&&d){onStart();onZoom(pd/d)}pd=d}
+  });
+  el.addEventListener("wheel",e=>{e.preventDefault();onStart();onZoom(Math.exp(Math.max(-100,Math.min(100,e.deltaY))*.0015))},{passive:false});
+  el.addEventListener("dblclick",()=>{onStart();onZoom(0)}); /* double-click resets zoom */
+}
+/* Cloud state box: drag = orbit, wheel/pinch = zoom. Touching it during playback pauses and arms the glide. */
+bindView($("ov"),(dx,dy)=>{yaw-=dx*.01;pit=Math.max(-1.4,Math.min(1.4,pit+dy*.01));place()},
+  f=>{cdist=f===0?30:Math.max(5,Math.min(100,cdist*f));place()},
+  ()=>{if(playing){stop();note("Paused. Move the slider, use Go, or press Play: the camera will glide to that frame.")}glideArmed=true});
+/* Camera location box: drag = orbit, wheel/pinch = zoom */
+bindView($("mm"),(dx,dy)=>{mYaw-=dx*.01;mPit=Math.max(.05,Math.min(1.5,mPit+dy*.01));if(clouds.length)drawMap()},
+  f=>{MS=f===0?14:Math.max(4,Math.min(150,MS/f));if(clouds.length)drawMap()},()=>{});
 
 $("up").onchange=async e=>{
   const fs=[...e.target.files].sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
