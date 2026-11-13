@@ -358,8 +358,8 @@ function loop(){
   requestAnimationFrame(loop);
 }
 function beginPlay(){
-  playing=true;$("bp").textContent="⏸ Pause";setMode("view");
-  if(vid){if(cur>=total-1)cur=0;av.currentTime=t0v+cur/30;av.muted=false;av.volume=1;av.play().then(()=>{note("🔊 Sound on");setTimeout(()=>{if(playing&&(av.webkitAudioDecodedByteCount===0||av.mozHasAudio===false))note("No audio detected in this video file.")},1500)}).catch(err=>{av.muted=true;av.play().catch(()=>{});note("Browser blocked sound ("+err.name+"), playing muted. Press Pause then Play again.")})}
+  playing=true;$("bp").textContent=" Pause";setMode("view");
+  if(vid){if(cur>=total-1)cur=0;av.currentTime=t0v+cur/30;av.muted=false;av.volume=1;av.play().then(()=>{note("Sound on");setTimeout(()=>{if(playing&&(av.webkitAudioDecodedByteCount===0||av.mozHasAudio===false))note("No audio detected in this video file.")},1500)}).catch(err=>{av.muted=true;av.play().catch(()=>{});note("Browser blocked sound ("+err.name+"), playing muted. Press Pause then Play again.")})}
   else{baseT=performance.now()-cur*1000/30;note("No audio source loaded.")}
   requestAnimationFrame(loop);
 }
