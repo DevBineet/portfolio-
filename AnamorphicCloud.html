@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Anamorphic Dot Cloud: Full Video</title>
+<style>
+/* ===== EDIT THESE ===== */
+:root{
+  color-scheme:dark;
+  --bg:#000000;          /* page background (pure black) */
+  --line:#ffffff;        /* box outline colour */
+  --line-w:1px;          /* box outline thickness */
+  --gap:16px;            /* space between boxes */
+  --main-share:52%;      /* width of the big camera box (rest goes to the 4 small boxes) */
+  --ctl-h:190px;         /* room kept under the boxes for the buttons */
+  --tag-display:block;   /* set to none to hide the small box labels */
+  --fg:#e8eaf0; --mut:#8b93a7; --pn:#171a22; --ac:#ff5a5f;
+  box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)
+}
+html,body{background:var(--bg);margin:0}
+body{color:var(--fg);font:14px/1.45 system-ui,sans-serif;padding:14px}
+
+/* ---- layout: big camera box on the left, 2x2 grid of boxes on the right, bottoms aligned ---- */
+.stage{display:grid;gap:var(--gap);
+  grid-template-columns:max(320px,min(var(--main-share),calc((100vh - var(--ctl-h))*4/3))) minmax(0,1fr)}
+.box{position:relative;box-sizing:border-box;border:var(--line-w) solid var(--line);background:#000;overflow:hidden;min-width:0;min-height:0}
+#bx-main{aspect-ratio:4/3;align-self:start}
+.right{position:relative;min-height:0}
+.right-in{position:absolute;inset:0;display:grid;gap:var(--gap);grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
+
+#c,#ov,#mm,#t,#av{position:absolute;inset:0;width:100%;height:100%;display:block;background:#000}
+#ov,#mm,#t,#av{object-fit:contain}
+#c,#ov{touch-action:none}
+#ov{cursor:grab}
+#t{image-rendering:pixelated}
+#av[hidden]{display:none}
+.tag{display:var(--tag-display);position:absolute;left:6px;top:6px;z-index:2;pointer-events:none;background:rgba(0,0,0,.75);color:var(--mut);
+  font:600 10px/1 system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;padding:3px 6px;border-radius:3px}
+
+#bx-stats{padding:28px 14px 10px}
+#st{height:100%;display:flex;flex-direction:column;justify-content:space-between;color:var(--mut);font-size:clamp(11px,.85vw,15px);line-height:1.25;overflow:auto}
+#st .r{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #1d212b;padding-bottom:3px}
+#st .r:last-child{border-bottom:0}
+#st b{color:var(--fg);font-variant-numeric:tabular-nums}
+
+.ctl{margin-top:14px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+button,label.btn{background:var(--pn);color:var(--fg);border:1px solid #2a2f3c;border-radius:6px;padding:7px 11px;font:inherit;cursor:pointer}
+button.on{border-color:var(--ac)}
+input[type=range]{flex:1;min-width:120px}
+.cap{color:var(--mut);font-size:12px;margin:6px 0}
+details.cap summary{cursor:pointer}
+
+/* narrow windows / phones: single column */
+@media (max-width:820px){
+  .stage{grid-template-columns:1fr}
+  #bx-main{width:100%}
+  .right{position:static}
+  .right-in{position:static;grid-template-rows:none}
+  .right-in .box{aspect-ratio:4/3}
+  #bx-stats{order:5;grid-column:1/-1;aspect-ratio:auto;min-height:260px}
+  #bx-cam{grid-column:1/-1;aspect-ratio:16/9}
+}
+</style></head><body>
+<div class="stage">
+  <div class="box" id="bx-main"><canvas id="c" width="640" height="480"></canvas><span class="tag">Camera preview</span></div>
+  <div class="right"><div class="right-in">
+    <div class="box" id="bx-vid"><canvas id="t" width="64" height="48"></canvas><video id="av" hidden playsinline preload="auto"></video><span class="tag">Source video</span></div>
+    <div class="box" id="bx-stats"><span class="tag">Stats</span><div id="st">Building…</div></div>
+    <div class="box" id="bx-cloud"><canvas id="ov" width="640" height="480"></canvas><span class="tag">Cloud state</span></div>
+    <div class="box" id="bx-cam"><canvas id="mm" width="480" height="360"></canvas><span class="tag">Camera location</span></div>
+  </div></div>
+</div>
+
+<div class="ctl">
+<div class="row">
+<button id="bp">▶ Play (30 fps + sound)</button>
+<span>Frame</span><input id="sl" type="range" min="0" max="29" value="0"><span id="fn">1/30</span>
+</div>
+<p class="cap" id="sn"></p>
+<div class="row">
+<label><input id="ub" type="checkbox" checked> use blockers</label>
+<label><input id="sb" type="checkbox"> show blockers (red)</label>
+<button id="ex">Export cloud.adc</button><label class="btn">Load .adc (+audio)<input id="ld" type="file" multiple hidden></label>
+<label class="btn">Upload video<input id="uv" type="file" accept="video/*" hidden></label>
+<label class="btn">Upload frames<input id="up" type="file" accept="image/*" multiple hidden></label>
+<label>start (s) <input id="vs" type="number" value="0" min="0" style="width:60px"></label>
+<label>length (s, 0 = all) <input id="ml" type="number" value="0" min="0" style="width:60px"></label>
+</div>
+<details class="cap"><summary>Help</summary>Every 30 frames get their own cloud (30 camera views each). Put video.mp4 next to this page and it is processed automatically (or use Upload video), then press Play; its audio plays in sync. Processing the whole video takes a while, so try a short length first. Drag inside the Cloud state box to orbit it. The Source video box shows the original video when one is loaded (video.mp4 next to this page is loaded automatically, or use Upload video).</details>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const W=64,H=48,FOV=28,R=10,TY=Math.tan(FOV*Math.PI/360),TX=TY*W/H,PS=2*TY/H,N=30;
+let frames=[],cams=[],X=[],Y=[],Z=[],S=[],B=[],need=[];
+let allFrames=[],clouds=[],total=0,cur=0,mode="view",playing=false,yaw=0.6,pit=0.3,hist=[],shown=-1,vid=false,t0v=0,baseT=0;
+const geoCache=new Map(),$=id=>document.getElementById(id);
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const norm=a=>{const l=Math.hypot(...a);return a.map(v=>v/l)};
+const tick=()=>new Promise(r=>setTimeout(r,0));
+let enc=[],WZ=[],BP=[],BZ=[],BG=[];const LK=Math.log(80)/255,qz=z=>Math.max(0,Math.min(255,Math.round(Math.log(z/.25)/LK))),dz=q=>.25*Math.exp(q*LK);
+const av=$("av");av.volume=1;const syncVid=()=>{av.hidden=!av.videoWidth;$("t").style.display=av.videoWidth?"none":"block"};av.addEventListener("loadedmetadata",syncVid);
+const note=s=>{$("sn").textContent=s};
+
+function thresh(d){const o=new Uint8Array(W*H);for(let i=0;i<W*H;i++)o[i]=d[i*4]*0.3+d[i*4+1]*0.59+d[i*4+2]*0.11>127?1:0;return o}
+function makeCams(){
+  cams=[];
+  for(let i=0;i<N;i++){
+    const y=1-2*(i+.5)/N,r=Math.sqrt(1-y*y),th=i*2.399963;
+    const pos=[R*r*Math.cos(th),R*y,R*r*Math.sin(th)],fwd=norm(pos.map(v=>-v));
+    const right=norm(cross(fwd,[0,1,0])),up=cross(right,fwd);
+    cams.push({pos,fwd,right,up});
+  }
+}
+function addDot(p,s,black){X.push(p[0]);Y.push(p[1]);Z.push(p[2]);S.push(s);B.push(black)}
+function rayPoint(c,px,py,z){
+  const u=((px+.5)/W*2-1)*TX*z,v=(1-(py+.5)/H*2)*TY*z;
+  return [0,1,2].map(k=>c.pos[k]+c.right[k]*u+c.up[k]*v+c.fwd[k]*z);
+}
+function project(c,x,y,zz){
+  const d=[x-c.pos[0],y-c.pos[1],zz-c.pos[2]],z=dot(d,c.fwd);
+  if(z<.05)return null;
+  return [z,Math.floor((dot(d,c.right)/(z*TX)+1)/2*W),Math.floor((1-dot(d,c.up)/(z*TY))/2*H)];
+}
+function zbuf(j){
+  const c=cams[j],d=new Float32Array(W*H).fill(Infinity),col=new Uint8Array(W*H);
+  for(let m=0;m<X.length;m++){
+    const q=project(c,X[m],Y[m],Z[m]);if(!q)continue;
+    const h=Math.min(4,Math.floor(S[m]/(q[0]*PS)/2));
+    for(let a=q[2]-h;a<=q[2]+h;a++){if(a<0||a>=H)continue;
+      for(let b=q[1]-h;b<=q[1]+h;b++){if(b<0||b>=W)continue;
+        const i=a*W+b;if(q[0]<d[i]){d[i]=q[0];col[i]=B[m]?2:1}}}
+  }
+  return{d,col};
+}
+function safe(p,z0,j){
+  for(let k=0;k<N;k++){if(k===j)continue;
+    const q=project(cams[k],p[0],p[1],p[2]);if(!q)continue;
+    const h=Math.min(4,Math.floor(z0/q[0]/2));
+    for(let a=q[2]-h;a<=q[2]+h;a++){if(a<0||a>=H)continue;
+      for(let b=q[1]-h;b<=q[1]+h;b++){if(b<0||b>=W)continue;
+        const i=a*W+b;if(frames[k][i]&&q[0]<need[k][i])return false}}}
+  return true;
+}
+function addBlockers(j){
+  const zb=zbuf(j);let cnt=0;
+  for(let i=0;i<W*H;i++){
+    if(frames[j][i]||zb.col[i]!==1)continue;
+    for(const f of [.97,.9,.75,.5]){
+      const zq=qz(zb.d[i]*f),z=dz(zq);if(z<.3)continue;
+      const p=rayPoint(cams[j],i%W,(i/W)|0,z);
+      if(safe(p,z,j)){addDot(p,z*PS,1);BP.push(i);BZ.push(zq);cnt++;break}
+    }
+  }
+  BG.push(cnt);
+}
+function evalAll(){
+  let ok=0,stray=0;const acc=new Float32Array(N);
+  for(let j=0;j<N;j++){
+    const zb=zbuf(j);let g=0;
+    for(let i=0;i<W*H;i++){const w=zb.col[i]===1;if(w===!!frames[j][i])g++;else if(w)stray++;}
+    acc[j]=g/(W*H);ok+=g;
+  }
+  return{acc,pct:ok/(N*W*H)*100,stray};
+}
+/* builds one independent cloud from 30 frames */
+function buildCloud(ch){
+  frames=ch;X=[];Y=[];Z=[];S=[];B=[];WZ=[];BP=[];BZ=[];BG=[];
+  need=cams.map(()=>new Float32Array(W*H).fill(Infinity));
+  let seed=12345;const rnd=()=>(seed=(seed*1664525+1013904223)>>>0)/4294967296;
+  for(let i=0;i<N;i++)for(let p=0;p<W*H;p++)if(frames[i][p]){
+    const zq=qz(R*(rnd()<.5?.1+.6*rnd():1.3+.6*rnd())),z=dz(zq);WZ.push(zq);
+    addDot(rayPoint(cams[i],p%W,(p/W)|0,z),z*PS,0);need[i][p]=z;
+  }
+  const white=X.length;
+  for(let pass=0;pass<2;pass++)for(let j=0;j<N;j++)addBlockers(j);
+  return encode(evalAll(),white);
+}
+/* compact chunk record: stats, 30 bit-packed frames, white z (1 byte each, log scale), blocker pixel+z */
+function encode(ev,wc){
+  const bc=BP.length,len=50+11520+wc+120+3*bc,u=new Uint8Array(len),v=new DataView(u.buffer);
+  v.setUint32(0,len,true);v.setFloat32(4,ev.pct,true);v.setUint32(8,ev.stray,true);v.setUint32(12,wc,true);v.setUint32(16,bc,true);
+  for(let j=0;j<N;j++)u[20+j]=Math.round(ev.acc[j]*255);
+  for(let f=0;f<N;f++)for(let p=0;p<W*H;p++)if(frames[f][p])u[50+f*384+(p>>3)]|=1<<(p&7);
+  let o=50+11520;u.set(WZ,o);o+=wc;
+  for(let g=0;g<BG.length;g++)v.setUint16(o+2*g,BG[g],true);o+=120;
+  for(let k=0;k<bc;k++)v.setUint16(o+2*k,BP[k],true);o+=2*bc;u.set(BZ,o);
+  return u;
+}
+function getCloud(k){
+  if(clouds[k])return clouds[k];
+  const u=enc[k],v=new DataView(u.buffer,u.byteOffset,u.byteLength),wc=v.getUint32(12,true),bc=v.getUint32(16,true),fr=[];
+  for(let f=0;f<N;f++){const a=new Uint8Array(W*H);for(let p=0;p<W*H;p++)a[p]=(u[50+f*384+(p>>3)]>>(p&7))&1;fr.push(a)}
+  let zi=50+11520;const go=zi+wc,po=go+120,zo=po+2*bc,M=wc+bc,P=new Float32Array(M*3),Sz=new Float32Array(M),Bk=new Float32Array(M);let m=0;
+  for(let i=0;i<N;i++)for(let p=0;p<W*H;p++)if(fr[i][p]){const z=dz(u[zi++]);P.set(rayPoint(cams[i],p%W,(p/W)|0,z),m*3);Sz[m++]=z*PS}
+  let b=0;
+  for(let g=0;g<2*N;g++){const cn=v.getUint16(go+2*g,true);for(let t=0;t<cn;t++,b++){const px=v.getUint16(po+2*b,true),z=dz(u[zo+b]);P.set(rayPoint(cams[g%N],px%W,(px/W)|0,z),m*3);Bk[m]=1;Sz[m++]=z*PS}}
+  const acc=new Float32Array(N);for(let j=0;j<N;j++)acc[j]=u[20+j]/255;
+  const c={p:P,s:Sz,b:Bk,white:wc,blk:bc,acc,pct:v.getFloat32(4,true),stray:v.getUint32(8,true),fr};
+  clouds[k]=c;if(clouds[k-4])delete clouds[k-4];return c;
+}
+async function buildAll(arr,label){
+  allFrames=arr;total=arr.length;clouds=[];enc=[];geoCache.forEach(g=>g.dispose());geoCache.clear();shown=-1;
+  const nc=Math.ceil(total/N),t1=performance.now();
+  for(let k=0;k<nc;k++){
+    const ch=[];for(let i=0;i<N;i++)ch.push(arr[Math.min(k*N+i,total-1)]);
+    enc.push(buildCloud(ch));clouds.length=enc.length;
+    $("st").innerHTML=label+"Building cloud <b>"+(k+1)+"/"+nc+"</b> · "+((performance.now()-t1)/1000).toFixed(0)+" s";
+    await tick();
+  }
+  cur=0;hist=[];$("sl").max=total-1;updateFrame();
+}
+
+/* three.js */
+const renderer=new THREE.WebGLRenderer({canvas:$("c")});renderer.setPixelRatio(1);renderer.setSize(640,480,false);
+const scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(40,W/H,.05,200);
+const mat=new THREE.ShaderMaterial({
+  uniforms:{uScale:{value:1},uMin:{value:0},uShow:{value:0},uUse:{value:1}},
+  vertexShader:"attribute float aSize;attribute float aBlack;varying float vB;uniform float uScale;uniform float uMin;void main(){vec4 mv=modelViewMatrix*vec4(position,1.);gl_PointSize=max(aSize*uScale/-mv.z,uMin);vB=aBlack;gl_Position=projectionMatrix*mv;}",
+  fragmentShader:"varying float vB;uniform float uShow;uniform float uUse;void main(){if(vB>.5){if(uUse<.5)discard;gl_FragColor=vec4(uShow,0.,0.,1.);}else gl_FragColor=vec4(1.);}"
+});
+const pts=new THREE.Points(new THREE.BufferGeometry(),mat);pts.frustumCulled=false;scene.add(pts);
+function showCloud(k){
+  if(shown===k)return;shown=k;
+  let g=geoCache.get(k);
+  if(!g){
+    const c=getCloud(k);g=new THREE.BufferGeometry();
+    g.setAttribute("position",new THREE.BufferAttribute(c.p,3));
+    g.setAttribute("aSize",new THREE.BufferAttribute(c.s,1));
+    g.setAttribute("aBlack",new THREE.BufferAttribute(c.b,1));
+    geoCache.set(k,g);
+    if(geoCache.size>40){const o=geoCache.keys().next().value;if(o!==k){geoCache.get(o).dispose();geoCache.delete(o)}}
+  }
+  pts.geometry=g;
+}
+const OW=640,OH=480,ovx=$("ov").getContext("2d");
+function place(){
+  if(!clouds.length)return;
+  mat.uniforms.uShow.value=$("sb").checked?1:0;
+  mat.uniforms.uUse.value=$("ub").checked?1:0;
+  cam.fov=40;cam.aspect=W/H;const r=30;
+  cam.position.set(r*Math.cos(pit)*Math.sin(yaw),r*Math.sin(pit),r*Math.cos(pit)*Math.cos(yaw));
+  cam.up.set(0,1,0);cam.lookAt(0,0,0);cam.updateProjectionMatrix();
+  mat.uniforms.uMin.value=1.5;mat.uniforms.uScale.value=480/(2*Math.tan(cam.fov*Math.PI/360));
+  renderer.render(scene,cam);
+  ovx.drawImage(renderer.domElement,0,0,OW,OH);
+  cam.fov=FOV;const c=cams[cur%N];
+  cam.position.set(...c.pos);cam.up.set(0,1,0);cam.lookAt(0,0,0);cam.updateProjectionMatrix();
+  mat.uniforms.uMin.value=0;mat.uniforms.uScale.value=480/(2*Math.tan(cam.fov*Math.PI/360));
+  renderer.render(scene,cam);
+}
+/* minimap of camera positions */
+const MW=480,MH=360,MS=14; /* camera-location canvas size + zoom */
+function mapPt(p){
+  const ca=Math.cos(.6),sa=Math.sin(.6),cp=Math.cos(1.047),sp=Math.sin(1.047);
+  const x=p[0]*ca+p[2]*sa,z=-p[0]*sa+p[2]*ca,y=p[1]*cp-z*sp,d=p[1]*sp+z*cp;
+  return[MW/2+x*MS,MH/2-y*MS,d/R];
+}
+function drawMap(){
+  const g=$("mm").getContext("2d");g.clearRect(0,0,MW,MH);
+  const P=v=>mapPt(v);
+  const ring=(f,col)=>{g.strokeStyle=col;g.lineWidth=1;g.beginPath();for(let i=0;i<=48;i++){const a=i/48*Math.PI*2,p=P(f(a));i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1])}g.stroke()};
+  const box=(v,col,w)=>{g.strokeStyle=col;g.lineWidth=w;for(let i=0;i<8;i++)for(const b of[1,2,4])if(!(i&b)){const p=P(v(i)),q=P(v(i|b));g.beginPath();g.moveTo(p[0],p[1]);g.lineTo(q[0],q[1]);g.stroke()}};
+  ring(a=>[R*Math.cos(a),0,R*Math.sin(a)],"#2f3545");
+  ring(a=>[R*Math.cos(a),R*Math.sin(a),0],"#20242f");
+  ring(a=>[0,R*Math.sin(a),R*Math.cos(a)],"#20242f");
+  box(i=>[(i&1?1:-1)*1.5,(i&2?1:-1)*1.5,(i&4?1:-1)*1.5],"#fff",1.5);
+  for(let i=0;i<N;i++){const q=P(cams[i].pos);g.fillStyle="rgba(139,147,167,"+(.2+.3*(q[2]+1)/2)+")";g.beginPath();g.arc(q[0],q[1],2.5,0,7);g.fill()}
+  const c=cams[cur%N],at=(x,y,z)=>[0,1,2].map(k=>c.pos[k]+c.right[k]*x+c.up[k]*y+c.fwd[k]*z);
+  const o=P(c.pos),cs=[[-1,1],[1,1],[1,-1],[-1,-1]].map(s=>P(at(s[0]*TX*R,s[1]*TY*R,R)));
+  g.fillStyle="rgba(255,90,95,.2)";g.strokeStyle="#ff5a5f";g.lineWidth=1.5;
+  g.beginPath();cs.forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]));g.closePath();g.fill();g.stroke();
+  cs.forEach(p=>{g.beginPath();g.moveTo(o[0],o[1]);g.lineTo(p[0],p[1]);g.stroke()});
+  box(i=>at((i&1?1:-1)*.8,(i&2?1:-1)*.55,(i&4?1:-1)*.9),"#ff5a5f",2);
+  const l=P(at(0,0,2.2));g.lineWidth=4;g.beginPath();g.moveTo(o[0],o[1]);g.lineTo(l[0],l[1]);g.stroke();
+  g.fillStyle="#fff";g.font="bold 11px system-ui";g.textAlign="center";g.fillText(cur%N+1,o[0],o[1]-10);
+}
+function showTarget(){
+  const x=$("t").getContext("2d"),im=x.createImageData(W,H),f=allFrames[cur];
+  for(let i=0;i<W*H;i++){const v=f[i]?255:0;im.data.set([v,v,v,255],i*4)}
+  x.putImageData(im,0,0);
+}
+function pushHist(i){hist.push(i%N);if(hist.length>14)hist.shift()}
+function updateFrame(){
+  if(!clouds.length)return;
+  const k=Math.floor(cur/N),c=getCloud(k);showCloud(k);if(cur%N===12&&k+1<clouds.length)setTimeout(()=>getCloud(k+1),0);showTarget();
+  $("sl").value=cur;$("fn").textContent=(cur+1)+"/"+total;
+  const R_=(l,v)=>"<div class=r><span>"+l+"</span><b>"+v+"</b></div>";
+  $("st").innerHTML=R_("Cloud",(k+1)+" / "+clouds.length)+R_("Frame",(cur+1)+" / "+total)+R_("View",(cur%N+1)+" / 30")+R_("Time",(cur/30).toFixed(2)+" s")+R_("White dots",c.white)+R_("Blockers",c.blk)+R_("Cloud accuracy",c.pct.toFixed(1)+"%")+R_("Strays",c.stray)+R_("This view",(c.acc[cur%N]*100).toFixed(1)+"%");
+  if(!playing||hist[hist.length-1]!==cur%N)pushHist(cur);
+  drawMap();place();
+}
+function setMode(m){place()}
+
+function stop(){playing=false;av.pause();$("bp").textContent="▶ Play (30 fps + sound)"}
+function loop(){
+  if(!playing)return;
+  let f;
+  if(vid){f=Math.floor((av.currentTime-t0v)*30+1e-6);if(av.ended||f>=total){stop();return}}
+  else f=Math.floor((performance.now()-baseT)*0.03)%total;
+  if(f<0)f=0;
+  if(f!==cur){
+    if(f>cur&&f-cur<40)for(let i=cur+1;i<f;i++)pushHist(i); /* keep skipped hops in the trail */
+    cur=f;updateFrame();
+  }
+  requestAnimationFrame(loop);
+}
+$("bp").onclick=()=>{
+  if(!clouds.length)return;
+  if(playing){stop();return}
+  playing=true;$("bp").textContent="⏸ Pause";setMode("view");
+  if(vid){if(cur>=total-1)cur=0;av.currentTime=t0v+cur/30;av.muted=false;av.volume=1;av.play().then(()=>{note("🔊 Sound on");setTimeout(()=>{if(playing&&(av.webkitAudioDecodedByteCount===0||av.mozHasAudio===false))note("No audio detected in this video file.")},1500)}).catch(err=>{av.muted=true;av.play().catch(()=>{});note("Browser blocked sound ("+err.name+"), playing muted. Press Pause then Play again.")})}
+  else{baseT=performance.now()-cur*1000/30;note("No audio source loaded.")}
+  requestAnimationFrame(loop);
+};
+$("sl").oninput=e=>{cur=+e.target.value;if(playing&&vid)av.currentTime=t0v+cur/30;else if(playing)baseT=performance.now()-cur*1000/30;hist=[];setMode("view");updateFrame()};
+$("ub").onchange=$("sb").onchange=place;
+let drag=false,lx=0,ly=0;const cv=$("ov");
+cv.onpointerdown=e=>{drag=true;lx=e.clientX;ly=e.clientY;cv.setPointerCapture(e.pointerId)};
+cv.onpointerup=()=>drag=false;
+cv.onpointermove=e=>{if(!drag)return;yaw-=(e.clientX-lx)*.01;pit=Math.max(-1.4,Math.min(1.4,pit+(e.clientY-ly)*.01));lx=e.clientX;ly=e.clientY;place()};
+
+$("up").onchange=async e=>{
+  const fs=[...e.target.files].sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+  if(fs.length<2)return;
+  stop();vid=false;t0v=0;const out=[];
+  for(const f of fs){
+    const img=await createImageBitmap(f),c=document.createElement("canvas");c.width=W;c.height=H;
+    const x=c.getContext("2d");x.drawImage(img,0,0,W,H);out.push(thresh(x.getImageData(0,0,W,H).data));
+  }
+  buildAll(out,"");
+};
+const seek=t=>new Promise(r=>{const h=()=>{av.removeEventListener("seeked",h);r()};av.addEventListener("seeked",h);av.currentTime=t});
+async function processVideo(src){
+  stop();$("st").textContent="Reading video…";
+  av.muted=true;av.src=src;
+  const ok=await new Promise(r=>{av.onerror=()=>r(false);av.onloadedmetadata=()=>{syncVid();r(true)}});
+  if(!ok){$("st").textContent="Could not load video.";note("Could not load video.mp4. Put it next to this page, or use Upload video.");return false}
+  const t0=+$("vs").value||0,len=+$("ml").value||0;
+  total=Math.max(N,Math.floor(Math.min(av.duration-t0,len||1e9)*30));
+  const c=document.createElement("canvas");c.width=W;c.height=H;const x=c.getContext("2d"),out=[];
+  try{
+  for(let i=0;i<total;i++){
+    await seek(Math.min(t0+(i+.5)/30,av.duration-0.05));
+    x.drawImage(av,0,0,W,H);out.push(thresh(x.getImageData(0,0,W,H).data));
+    if(i%15===0)$("st").innerHTML="Reading frames <b>"+i+"/"+total+"</b>";
+  }
+  }catch(err){
+    $("st").textContent="Cannot read video frames: "+err.name;
+    note(location.protocol==="file:"?"Browser blocks frame reading from a file:// page. Run a local server in this folder (python -m http.server) and open http://localhost:8000/AnamorphicCloud.html":"Frame reading failed: "+err.message);
+    return false;
+  }
+  vid=true;t0v=t0;
+  await buildAll(out,"Frames read. ");
+  av.currentTime=t0;
+  return true;
+}
+$("uv").onchange=e=>{const f=e.target.files[0];if(f)processVideo(URL.createObjectURL(f))};
+async function loadAdc(buf){
+  let u=new Uint8Array(buf);
+  if(u[0]===0x1f&&u[1]===0x8b)u=new Uint8Array(await new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
+  const v=new DataView(u.buffer,u.byteOffset,u.byteLength);
+  if(String.fromCharCode(u[0],u[1],u[2],u[3])!=="ADC1")throw new Error("not an .adc file");
+  stop();const tot=v.getUint32(4,true),nc=v.getUint32(8,true);t0v=v.getFloat32(12,true);
+  enc=[];let pos=16;for(let k=0;k<nc;k++){const len=v.getUint32(pos,true);enc.push(u.subarray(pos,pos+len));pos+=len}
+  const arr=[];
+  for(let k=0;k<nc;k++)for(let f=0;f<N&&k*N+f<tot;f++){const a=new Uint8Array(W*H);for(let p=0;p<W*H;p++)a[p]=(enc[k][50+f*384+(p>>3)]>>(p&7))&1;arr.push(a)}
+  allFrames=arr;total=tot;clouds=[];clouds.length=nc;geoCache.forEach(g=>g.dispose());geoCache.clear();shown=-1;
+  cur=0;hist=[];$("sl").max=total-1;updateFrame();
+}
+const loadAudio=src=>new Promise(r=>{av.onerror=()=>r(false);av.onloadedmetadata=()=>{syncVid();r(true)};av.muted=true;av.src=src});
+$("ex").onclick=async()=>{
+  if(!enc.length||enc.length<Math.ceil(total/N)){note("Nothing to export yet.");return}
+  const head=new Uint8Array(16),hv=new DataView(head.buffer);head.set([65,68,67,49]);hv.setUint32(4,total,true);hv.setUint32(8,enc.length,true);hv.setFloat32(12,t0v,true);
+  note("Compressing…");
+  const out=await new Response(new Blob([head,...enc]).stream().pipeThrough(new CompressionStream("gzip"))).blob();
+  const a=document.createElement("a");a.href=URL.createObjectURL(out);a.download="cloud.adc";a.click();
+  note("Exported cloud.adc ("+(out.size/1048576).toFixed(1)+" MB). Host it next to this page with your audio file (audio.mp3).");
+};
+$("ld").onchange=async e=>{
+  const fs=[...e.target.files],d=fs.find(f=>/\.adc$/i.test(f.name)),a=fs.find(f=>/^(audio|video)\//.test(f.type));
+  if(!d){note("Pick the .adc file (and optionally the audio or video file too).");return}
+  try{await loadAdc(await d.arrayBuffer())}catch(err){note("Could not load: "+err.message);return}
+  vid=false;if(a&&await loadAudio(URL.createObjectURL(a)))vid=true;
+  note(vid?"Loaded. Press Play for sound.":"Loaded without audio.");
+};
+async function autoLoad(){
+  const qs=new URLSearchParams(location.search);
+  try{const r=await fetch(qs.get("data")||"cloud.adc");if(!r.ok)return false;await loadAdc(await r.arrayBuffer())}catch(e){if(location.protocol==="file:")note("Opened from file://, so cloud.adc cannot be fetched. Use a local server (python -m http.server) or the Load .adc button.");return false}
+  document.querySelectorAll("#uv,#up,#vs,#ml,#ld").forEach(e=>(e.closest("label")||e).style.display="none");$("ex").style.display="none";
+  vid=false;
+  for(const c of qs.get("audio")?[qs.get("audio")]:["video.mp4","audio.mp4","audio.mp3","audio.m4a","audio.ogg","audio.wav"])if(await loadAudio(c)){vid=true;break}
+  note(vid?"Press Play for sound.":"No audio file found (put audio.mp3 next to this page). Playing silent.");
+  return true;
+}
+(async()=>{
+  makeCams();
+  if(!await autoLoad()){const q=new URLSearchParams(location.search).get("video");if(!await processVideo(q||"video.mp4")&&!q&&location.protocol!=="file:")await processVideo("audio.mp4")}
+  setMode("view");
+})();
+</script></body></html>
